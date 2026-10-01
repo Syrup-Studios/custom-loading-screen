@@ -1,0 +1,12 @@
+mod:
+  id: custom_loading_screen
+  name: Custom Loading Screen
+  group: net.syrupstudios
+  version: 1.0.0
+  description: Client-side loading screen mod scaffold.
+  authors: Syrup Studios
+  license: All Rights Reserved
+
+neoforge:deps:
+  "1.21.1":
+    neoforge_version: 21.1.209
