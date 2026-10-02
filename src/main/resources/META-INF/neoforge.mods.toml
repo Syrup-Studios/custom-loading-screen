@@ -3,26 +3,23 @@ loaderVersion="[4,)"
 license="${license}"
 
 [[mods]]
-modId="${modId}"
+modId="customloadingscreen"
 version="${version}"
 displayName="${modName}"
 authors="${authors}"
 description='''${modDescription}'''
 displayTest="IGNORE_SERVER_VERSION"
 
-[[mixins]]
-config="custom_loading_screen.mixins.json"
-
-[[dependencies.${modId}]]
+[[dependencies.customloadingscreen]]
 modId="neoforge"
 type="required"
-versionRange="[${neoforge},)"
+versionRange="[21.1.209,)"
 ordering="NONE"
 side="CLIENT"
 
-[[dependencies.${modId}]]
+[[dependencies.customloadingscreen]]
 modId="minecraft"
 type="required"
-versionRange="${minecraft}"
+versionRange="[1.21.1]"
 ordering="NONE"
 side="CLIENT"

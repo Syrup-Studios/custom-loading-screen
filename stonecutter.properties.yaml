@@ -1,9 +1,9 @@
 mod:
-  id: custom_loading_screen
+  id: customloadingscreen
   name: Custom Loading Screen
-  group: net.syrupstudios
-  version: 1.0.0
-  description: Client-side loading screen mod scaffold.
+  group: com.customloadingscreen
+  version: 0.1.0
+  description: 'A fully customizable, choreographed early loading screen for NeoForge.'
   authors: Syrup Studios
   license: All Rights Reserved
 
