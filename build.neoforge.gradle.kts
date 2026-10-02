@@ -9,7 +9,7 @@ val sourceSets = extensions.getByType<SourceSetContainer>()
 
 sourceSets.named("main") {
     java.include("com/customloadingscreen/CustomLoadingScreen.java")
-    resources.include("META-INF/neoforge.mods.toml")
+    resources.include("META-INF/neoforge.mods.toml", "mcmod.info")
 }
 
 val earlyProvider = sourceSets.create("earlyProvider") {
@@ -72,7 +72,7 @@ tasks.processResources {
         "neoforge" to project.property("deps.neoforge_version")
     )
     inputs.properties(props)
-    filesMatching("META-INF/neoforge.mods.toml") { expand(props) }
+    filesMatching(listOf("META-INF/neoforge.mods.toml", "mcmod.info")) { expand(props) }
 }
 
 tasks.withType<AbstractArchiveTask>().configureEach {
@@ -86,6 +86,7 @@ tasks.withType<Jar>().configureEach {
 val modJar = tasks.register<Jar>("modJar") {
     archiveClassifier.set("internal-mod")
     from(sourceSets.named("main").get().output)
+    exclude("mcmod.info")
 }
 
 tasks.named<Jar>("jar") {

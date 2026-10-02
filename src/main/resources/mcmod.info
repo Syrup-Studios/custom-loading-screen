@@ -1,0 +1,10 @@
+[
+  {
+    "modid": "${modId}",
+    "name": "${modName}",
+    "version": "${version}",
+    "url": "${homepage}",
+    "description": "${modDescription}",
+    "authorList": ["${authors}"]
+  }
+]

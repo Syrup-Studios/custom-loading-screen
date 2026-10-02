@@ -215,6 +215,7 @@ public final class Scene {
     }
 
     private static double parentEnd(List<Animation> animations, Animation child) {
+        if (child.name.isEmpty()) return Double.NaN;
         for (Animation parent : animations) if (parent.chain.equals(child.name) && parent.complete) return parent.completedAt;
         return Double.NaN;
     }

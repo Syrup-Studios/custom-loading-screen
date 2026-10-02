@@ -55,15 +55,15 @@ public final class CustomLoadingScreen {
     private static void resolveStageProvider() throws ReflectiveOperationException {
         Field providerField = ImmediateWindowHandler.class.getDeclaredField("provider");
         providerField.setAccessible(true);
-        Object provider = providerField.get(null);
+        Object earlyProvider = providerField.get(null);
         providerResolved = true;
-        if (provider == null) return;
-        if (provider.getClass().getName().endsWith("$DummyProvider")) return;
-        Method name = provider.getClass().getMethod("name");
-        if (!"customloadingscreen".equals(name.invoke(provider))) return;
-        stageProvider = provider;
-        stageMethod = provider.getClass().getMethod("lifecycleStage", String.class);
-        stageMethod.setAccessible(true);
+        if (earlyProvider == null) return;
+        if (earlyProvider.getClass().getName().endsWith("$DummyProvider")) return;
+        ClassLoader classLoader = earlyProvider.getClass().getClassLoader();
+        Class<?> providerClass = Class.forName("com.customloadingscreen.startup.StartupWindowProvider", false, classLoader);
+        Method activeProvider = providerClass.getMethod("getActiveProvider");
+        stageProvider = activeProvider.invoke(null);
+        if (stageProvider != null) stageMethod = providerClass.getMethod("lifecycleStage", String.class);
     }
 
 }

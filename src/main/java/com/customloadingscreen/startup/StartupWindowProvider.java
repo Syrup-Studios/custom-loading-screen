@@ -27,11 +27,16 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
+import java.util.function.IntSupplier;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+
+import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 
 public final class StartupWindowProvider extends DisplayWindow {
     public static final String PROVIDER_NAME = "customloadingscreen";
     private static final Logger LOGGER = LoggerFactory.getLogger(StartupWindowProvider.class);
+    private static volatile StartupWindowProvider activeProvider;
     private static final long MAX_SCENE_BYTES = 1_048_576;
     private static final Field GLOBAL_ALPHA = findGlobalAlpha();
 
@@ -41,6 +46,11 @@ public final class StartupWindowProvider extends DisplayWindow {
     private final AtomicBoolean elementBufferClosed = new AtomicBoolean();
     private volatile StartupRenderer renderer;
     private volatile boolean installed;
+    private long gameWindow;
+    private Field framebufferWidth;
+    private Field framebufferHeight;
+    private final int[] framebufferWidthValue = new int[1];
+    private final int[] framebufferHeightValue = new int[1];
 
     @Override
     public String name() {
@@ -82,8 +92,48 @@ public final class StartupWindowProvider extends DisplayWindow {
 
     @Override
     public Runnable initialize(String[] arguments) {
+        activeProvider = this;
         LOGGER.info("Initializing custom early loading window");
         return super.initialize(arguments);
+    }
+
+    public static StartupWindowProvider getActiveProvider() {
+        return activeProvider;
+    }
+
+    @Override
+    public long setupMinecraftWindow(IntSupplier width, IntSupplier height, Supplier<String> title, LongSupplier monitorSupplier) {
+        gameWindow = super.setupMinecraftWindow(width, height, title, monitorSupplier);
+        try {
+            framebufferWidth = field("fbWidth");
+            framebufferHeight = field("fbHeight");
+            refreshFramebufferSize();
+        } catch (ReflectiveOperationException error) {
+            framebufferWidth = null;
+            framebufferHeight = null;
+            LOGGER.warn("Could not refresh the early window framebuffer size after handoff", error);
+        }
+        return gameWindow;
+    }
+
+    @Override
+    public void periodicTick() {
+        refreshFramebufferSize();
+        super.periodicTick();
+    }
+
+    private void refreshFramebufferSize() {
+        if (gameWindow == 0 || framebufferWidth == null || framebufferHeight == null) return;
+        glfwGetFramebufferSize(gameWindow, framebufferWidthValue, framebufferHeightValue);
+        if (framebufferWidthValue[0] == 0 || framebufferHeightValue[0] == 0) return;
+        try {
+            framebufferWidth.setInt(this, framebufferWidthValue[0]);
+            framebufferHeight.setInt(this, framebufferHeightValue[0]);
+        } catch (IllegalAccessException error) {
+            framebufferWidth = null;
+            framebufferHeight = null;
+            LOGGER.warn("Could not refresh the early window framebuffer size after handoff", error);
+        }
     }
 
     @Override
