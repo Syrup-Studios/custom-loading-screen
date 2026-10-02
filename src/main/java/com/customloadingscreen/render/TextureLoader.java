@@ -9,10 +9,8 @@ import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.HashSet;
-import java.util.Set;
 import net.neoforged.fml.loading.FMLPaths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -22,9 +20,9 @@ import org.lwjgl.BufferUtils;
 public final class TextureLoader implements AutoCloseable {
     private static final Logger LOGGER = LogManager.getLogger();
     private static final int MAX_FILE_BYTES = 16 * 1024 * 1024;
-    private static final int MAX_TEXTURES = 128;
-    private final Map<String, Texture> textures = new LinkedHashMap<>(16, .75f, true);
-    private final Set<String> reported = new HashSet<>();
+    private static final long MAX_CACHED_PIXEL_BYTES = 128L * 1024 * 1024;
+    private final Map<String, Texture> textures = new HashMap<>();
+    private long cachedPixelBytes;
 
     public int load(String name) {
         String key;
@@ -51,7 +49,7 @@ public final class TextureLoader implements AutoCloseable {
             return failed(key);
         }
         encoded.flip();
-        int texture, imageWidth, imageHeight;
+        int imageWidth, imageHeight;
         try (var stack = stackPush()) {
             var width = stack.mallocInt(1);
             var height = stack.mallocInt(1);
@@ -59,31 +57,45 @@ public final class TextureLoader implements AutoCloseable {
             if (!stbi_info_from_memory(encoded, width, height, channels) || width.get(0) < 1 || height.get(0) < 1 || width.get(0) > 4096 || height.get(0) > 4096 || width.get(0) * (long) height.get(0) > 16_777_216L) {
                 return failed(key);
             }
+            long pixelBytes = width.get(0) * (long) height.get(0) * 4;
+            if (pixelBytes > MAX_CACHED_PIXEL_BYTES - cachedPixelBytes) return failed(key);
             encoded.rewind();
             ByteBuffer pixels = stbi_load_from_memory(encoded, width, height, channels, 4);
-            if (pixels == null || width.get(0) > 4096 || height.get(0) > 4096 || width.get(0) * (long) height.get(0) > 16_777_216L) {
-                if (pixels != null) stbi_image_free(pixels);
+            if (pixels == null) return failed(key);
+            if (width.get(0) < 1 || height.get(0) < 1 || width.get(0) > 4096 || height.get(0) > 4096 || width.get(0) * (long) height.get(0) > 16_777_216L) {
+                stbi_image_free(pixels);
                 return failed(key);
             }
             imageWidth = width.get(0);
             imageHeight = height.get(0);
+            pixelBytes = imageWidth * (long) imageHeight * 4;
+            if (pixelBytes > MAX_CACHED_PIXEL_BYTES - cachedPixelBytes) {
+                stbi_image_free(pixels);
+                return failed(key);
+            }
+            int texture = 0;
             try {
+                while (glGetError() != GL_NO_ERROR) { }
                 texture = glGenTextures();
+                if (texture == 0) throw new IllegalStateException("Could not allocate OpenGL texture");
                 glBindTexture(GL_TEXTURE_2D, texture);
                 glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width.get(0), height.get(0), 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                int error = GL_NO_ERROR;
+                int nextError;
+                while ((nextError = glGetError()) != GL_NO_ERROR) error = nextError;
+                if (error != GL_NO_ERROR) throw new IllegalStateException("OpenGL texture upload failed: " + error);
+            } catch (RuntimeException ex) {
+                if (texture != 0) glDeleteTextures(texture);
+                return failed(key);
             } finally { stbi_image_free(pixels); }
+            textures.put(key, new Texture(texture, imageWidth, imageHeight));
+            cachedPixelBytes += pixelBytes;
+            return texture;
         }
-        if (textures.size() == MAX_TEXTURES) {
-            var oldest = textures.entrySet().iterator().next();
-            glDeleteTextures(oldest.getValue().id);
-            textures.remove(oldest.getKey());
-        }
-        textures.put(key, new Texture(texture, imageWidth, imageHeight));
-        return texture;
     }
 
     public int width(String name) { Texture t = cached(name); return t == null ? 0 : t.width; }
@@ -96,12 +108,7 @@ public final class TextureLoader implements AutoCloseable {
     private record Texture(int id, int width, int height) {}
 
     private int failed(String key) {
-        if (reported.add(key)) LOGGER.warn("Could not load startup texture '{}'; using the scene fallback.", key);
-        if (textures.size() == MAX_TEXTURES) {
-            var oldest = textures.entrySet().iterator().next();
-            if (oldest.getValue().id != 0) glDeleteTextures(oldest.getValue().id);
-            textures.remove(oldest.getKey());
-        }
+        if (!textures.containsKey(key)) LOGGER.warn("Could not load startup texture '{}'; using the scene fallback.", key);
         textures.put(key, new Texture(0, 0, 0));
         return 0;
     }
@@ -133,5 +140,6 @@ public final class TextureLoader implements AutoCloseable {
     @Override public void close() {
         textures.values().forEach(texture -> { if (texture.id != 0) glDeleteTextures(texture.id); });
         textures.clear();
+        cachedPixelBytes = 0;
     }
 }

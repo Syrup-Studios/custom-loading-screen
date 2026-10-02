@@ -26,7 +26,7 @@ public final class StartupStageAdapter {
         Scene.Stage activeStage = stage;
         for (ProgressMeter meter : meters) {
             Scene.Stage detected = stageFor(meter.name(), meter.label().getText(), stage);
-            boolean finalResourceMeter = isMinecraftProgress(meter) && stage == Scene.Stage.FINALIZING;
+            boolean finalResourceMeter = isMinecraftProgress(meter.name()) && stage == Scene.Stage.FINALIZING;
             if (detected != null && detected.ordinal() >= activeStage.ordinal()) {
                 activeStage = detected;
                 active = meter;
@@ -39,13 +39,14 @@ public final class StartupStageAdapter {
         }
         if (active != null && activeStage == stage && active.steps() > 0) {
             stageProgress = clamp(active.progress());
+            if (stageProgress < 0) return;
             if (active.name().toLowerCase(java.util.Locale.ROOT).contains("mod construction")) {
                 loadedModCount = Math.max(0, active.current());
                 totalModCount = Math.max(0, active.steps());
             }
             float value = (stage.ordinal() + stageProgress) / (STAGES.length - 1);
             if (overallProgress < 0 || value > overallProgress) overallProgress = Math.min(0.99f, value);
-        }
+        } else stageProgress = -1;
     }
 
     public Scene.Stage stage() { return stage; }
@@ -76,16 +77,12 @@ public final class StartupStageAdapter {
         if (value.contains("construct")) return Scene.Stage.MOD_CONSTRUCTION;
         if (value.contains("common setup") || value.contains("common_setup")) return Scene.Stage.COMMON_SETUP;
         if (value.contains("client setup") || value.contains("sided setup")) return Scene.Stage.CLIENT_SETUP;
-        if (isMinecraftProgress(name, label) && current.ordinal() >= Scene.Stage.CLIENT_SETUP.ordinal()) return Scene.Stage.RESOURCE_LOADING;
+        if (isMinecraftProgress(name) && current.ordinal() >= Scene.Stage.CLIENT_SETUP.ordinal()) return Scene.Stage.RESOURCE_LOADING;
         if (value.contains("final")) return Scene.Stage.FINALIZING;
         return null;
     }
 
-    private static boolean isMinecraftProgress(ProgressMeter meter) {
-        return isMinecraftProgress(meter.name(), meter.label().getText());
-    }
-
-    private static boolean isMinecraftProgress(String name, String label) {
+    private static boolean isMinecraftProgress(String name) {
         return name.equalsIgnoreCase("Minecraft Progress");
     }
 

@@ -66,6 +66,7 @@ public final class Scene {
         public final Trigger trigger;
         public final double threshold;
         public final Stage stage;
+        private Animation parent;
         private double activatedAt=Double.NaN;
         private double completedAt=Double.NaN;
         private double lastValue;
@@ -121,7 +122,7 @@ public final class Scene {
             hasTime = true;
             activateStage(stage, time);
             for (Element element : elements) for (Animation animation : element.animations) {
-                if (animation.trigger == Trigger.TIME && !hasParent(element.animations, animation)) animation.activate(time);
+                if (animation.trigger == Trigger.TIME && animation.parent == null) animation.activate(time);
             }
         }
 
@@ -129,10 +130,8 @@ public final class Scene {
             resetState(element, time);
             Arrays.fill(element.winners, null);
             for (Animation animation : element.animations) {
-                boolean chained = hasParent(element.animations, animation);
-                if (chained && !parentComplete(element.animations, animation)) continue;
-                double parentEnd = parentEnd(element.animations, animation);
-                if (!Double.isNaN(parentEnd)) animation.activate(parentEnd);
+                if (animation.parent != null && !animation.parent.complete) continue;
+                if (animation.parent != null) animation.activate(animation.parent.completedAt);
                 double driver = switch (animation.trigger) {
                     case OVERALL_PROGRESS -> this.overallProgress;
                     case STAGE_PROGRESS -> this.stageProgress;
@@ -172,7 +171,7 @@ public final class Scene {
 
     private void activateStage(Stage value, double at) {
         for (Element element : elements) for (Animation animation : element.animations) {
-            if (animation.trigger == Trigger.STAGE && animation.stage == value && !hasParent(element.animations, animation)) animation.activate(at);
+            if (animation.trigger == Trigger.STAGE && animation.stage == value && animation.parent == null) animation.activate(at);
         }
     }
 
@@ -180,8 +179,7 @@ public final class Scene {
         e.currentX = e.x; e.currentY = e.y; e.currentWidth = e.width; e.currentHeight = e.height;
         e.currentScaleX = e.scaleX; e.currentScaleY = e.scaleY; e.currentRotation = e.rotation; e.currentOpacity = e.opacity;
         if (e.frameWidth > 0 && e.frameHeight > 0 && e.fps > 0) {
-            int frame = (int) (time * e.fps);
-            e.currentFrame = e.spriteLoop ? Math.floorMod(frame, e.frameCount) : Math.min(frame, e.frameCount - 1);
+            e.currentFrame = Math.max(0, (int) (time * e.fps));
         } else e.currentFrame = 0;
     }
 
@@ -203,23 +201,6 @@ public final class Scene {
         }
     }
 
-    private static boolean hasParent(List<Animation> animations, Animation child) {
-        if (child.name.isEmpty()) return false;
-        for (Animation parent : animations) if (parent.chain.equals(child.name)) return true;
-        return false;
-    }
-
-    private static boolean parentComplete(List<Animation> animations, Animation child) {
-        for (Animation parent : animations) if (parent.chain.equals(child.name)) return parent.complete;
-        return true;
-    }
-
-    private static double parentEnd(List<Animation> animations, Animation child) {
-        if (child.name.isEmpty()) return Double.NaN;
-        for (Animation parent : animations) if (parent.chain.equals(child.name) && parent.complete) return parent.completedAt;
-        return Double.NaN;
-    }
-
     private static void orderAndValidateChains(List<Animation> animations) {
         Map<String, Animation> named = new HashMap<>();
         for (Animation animation : animations) {
@@ -227,18 +208,19 @@ public final class Scene {
                 throw new IllegalArgumentException("Duplicate animation name: " + animation.name);
             }
         }
-        Map<String, Animation> parentByChild = new HashMap<>();
         for (Animation parent : animations) {
             if (parent.chain.isEmpty()) continue;
-            if (!named.containsKey(parent.chain)) throw new IllegalArgumentException("Unknown onComplete animation: " + parent.chain);
-            if (parentByChild.putIfAbsent(parent.chain, parent) != null) throw new IllegalArgumentException("Multiple onComplete parents: " + parent.chain);
+            Animation child = named.get(parent.chain);
+            if (child == null) throw new IllegalArgumentException("Unknown onComplete animation: " + parent.chain);
+            if (child.parent != null) throw new IllegalArgumentException("Multiple onComplete parents: " + parent.chain);
+            child.parent = parent;
         }
         List<Animation> ordered = new ArrayList<>(animations.size());
         while (ordered.size() < animations.size()) {
             Animation next = null;
             for (Animation candidate : animations) {
                 if (ordered.contains(candidate)) continue;
-                Animation parent = parentByChild.get(candidate.name);
+                Animation parent = candidate.parent;
                 if (parent == null || ordered.contains(parent)) { next = candidate; break; }
             }
             if (next == null) throw new IllegalArgumentException("Animation onComplete chain contains a cycle");
@@ -322,7 +304,14 @@ public final class Scene {
     private static double ease(Easing e,double t){return switch(e){case LINEAR->t;case IN_QUAD->t*t;case OUT_QUAD->t*(2-t);case IN_OUT_QUAD->t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;case OUT_CUBIC->1-Math.pow(1-t,3);case IN_OUT_CUBIC->t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;case OUT_BACK->{double c=1.70158;yield 1+(c+1)*Math.pow(t-1,3)+c*Math.pow(t-1,2);}};}
     private static double clamp(double n){return Double.isFinite(n)?Math.max(0,Math.min(1,n)):0;}
     private static double progress(double n){return Double.isFinite(n)&&n>=0?Math.max(0,Math.min(1,n)):-1;}
-    private static double num(JsonObject o,String k,double d){return o.has(k)?o.get(k).getAsDouble():d;} private static int integer(JsonObject o,String k,int d){return o.has(k)?o.get(k).getAsInt():d;}
+    private static double num(JsonObject o,String k,double d){return o.has(k)?o.get(k).getAsDouble():d;}
+    private static int integer(JsonObject o,String k,int d){
+        if (!o.has(k)) return d;
+        JsonElement value = o.get(k);
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw new IllegalArgumentException(k + " must be an integer");
+        try { return value.getAsBigDecimal().intValueExact(); }
+        catch (ArithmeticException | NumberFormatException ex) { throw new IllegalArgumentException(k + " must be an integer", ex); }
+    }
     private static boolean bool(JsonObject o,String k,boolean d){return o.has(k)?o.get(k).getAsBoolean():d;} private static String string(JsonObject o,String k,String d){return o.has(k)?o.get(k).getAsString():d;}
     private static <E extends Enum<E>> E enumValue(Class<E> c, String s) {
         try {

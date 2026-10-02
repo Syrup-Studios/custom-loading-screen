@@ -9,6 +9,7 @@ import net.neoforged.fml.loading.FMLPaths;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,7 +37,6 @@ import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
 public final class StartupWindowProvider extends DisplayWindow {
     public static final String PROVIDER_NAME = "customloadingscreen";
     private static final Logger LOGGER = LoggerFactory.getLogger(StartupWindowProvider.class);
-    private static volatile StartupWindowProvider activeProvider;
     private static final long MAX_SCENE_BYTES = 1_048_576;
     private static final Field GLOBAL_ALPHA = findGlobalAlpha();
 
@@ -92,13 +92,8 @@ public final class StartupWindowProvider extends DisplayWindow {
 
     @Override
     public Runnable initialize(String[] arguments) {
-        activeProvider = this;
         LOGGER.info("Initializing custom early loading window");
         return super.initialize(arguments);
-    }
-
-    public static StartupWindowProvider getActiveProvider() {
-        return activeProvider;
     }
 
     @Override
@@ -202,10 +197,10 @@ public final class StartupWindowProvider extends DisplayWindow {
                 }
             }
         }
-        long size = Files.size(path);
-        if (size > MAX_SCENE_BYTES) throw new IllegalArgumentException("Scene file is larger than 1 MiB");
         try (InputStream input = Files.newInputStream(path)) {
-            return Scene.load(input);
+            byte[] bytes = input.readNBytes((int) MAX_SCENE_BYTES + 1);
+            if (bytes.length > MAX_SCENE_BYTES) throw new IllegalArgumentException("Scene file is larger than 1 MiB");
+            return Scene.load(new ByteArrayInputStream(bytes));
         }
     }
 

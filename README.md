@@ -64,11 +64,11 @@ Element keys. Unknown types or invalid values stop scene loading.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `id` | string | `element_<index>` | Unique element name. Up to 256 characters. |
-| `type` | string | `rect` | `rect`, `text`, `sprite`, `logo`, `progress_bar`, or `particles`. |
+| `type` | string | `rect` | `rect`, `text`, `sprite`, `texture`, `image`, `logo`, `progress_bar`, or `particles`. `texture`, `image`, `logo`, and `sprite` draw an image. |
 | `layer` | integer | `0` | Draw order. Lower values draw first. |
 | `x`, `y` | number | `0` | Position on the virtual canvas. |
 | `width`, `height` | number | `0` | Element size. Range: 0–16384. |
-| `anchor` | string | `top_left` | `top_left` places the element from its upper-left corner. `center` places it around its center. |
+| `anchor` | string | `top_left` | `top_left` keeps the origin at the upper-left. `center` centers text using its measured width and a 24-pixel font line box; other elements use their width and height box. |
 | `scaleX`, `scaleY` | number | `1` | Scale on each axis. Absolute value is limited to 100. |
 | `rotation` | number | `0` | Rotation in degrees. Absolute value is limited to 36000. |
 | `opacity` | number | `1` | Base opacity from 0 to 1. |
@@ -76,9 +76,9 @@ Element keys. Unknown types or invalid values stop scene loading.
 | `texture` | string | empty | Relative image path for `sprite` or `logo` elements. |
 | `text` | string | empty | Text value. It is the fallback when an image texture is missing. |
 | `frameWidth`, `frameHeight` | integer | `0` | Frame size in pixels for a sprite sheet. |
-| `frameCount` | integer | `1` | Number of frames. Range: 1–4096 and limited by the image sheet. Frames follow rows from left to right. |
+| `frameCount` | integer | `1` | Number of frames. Range: 1–4096 and limited by the image sheet. Frames follow rows from left to right. Sampling clamps at the image edge. |
 | `fps` | number | `0` | Sprite frames per second. Range: 0–240. Zero disables frame animation. |
-| `spriteLoop` | boolean | `true` | Repeat the sprite frames. `false` holds the last frame. |
+| `spriteLoop` | boolean | `true` | Repeat the sprite frames. `false` holds the last frame. The frame index wraps when true and clamps to the last available frame when false. |
 | `parallaxX`, `parallaxY` | number | `0` | Add a sine-wave position offset in pixels. |
 | `parallaxPeriod` | number | `4` | Seconds for one parallax cycle. Zero disables parallax. Maximum: 3600. |
 | `count` | integer | `32` | Particle count. Range: 0–128. |
@@ -88,6 +88,12 @@ Element keys. Unknown types or invalid values stop scene loading.
 | `animations` | array | `[]` | Property animations for this element. Limit: 32. |
 
 The `particles` type uses the element position and size as its particle field. Its `tint`, `opacity`, `count`, `speed`, `size`, and `spread` keys control the particle color and motion.
+
+Integer fields reject fractional values and values outside their documented range.
+
+The loader caches successful decoded textures up to a total of 128 MiB of RGBA pixels. It rejects an image that exceeds this budget, and uses the scene fallback when an image is missing, rejected, or fails to upload.
+
+When overall progress is available, a `progress_bar` uses its current animated width multiplied by overall progress. If progress is unknown, it uses its current width unchanged.
 
 ## Animations
 
@@ -111,11 +117,11 @@ Supported easing values are `linear`, `inQuad`, `outQuad`, `inOutQuad`, `outCubi
 
 Stage names are `BOOT`, `MOD_DISCOVERY`, `MOD_CONSTRUCTION`, `COMMON_SETUP`, `CLIENT_SETUP`, `RESOURCE_LOADING`, `FINALIZING`, and `COMPLETE`. Lifecycle events report mod construction, common setup, client setup, finalizing, and completion. The adapter reads FML progress meters for discovery and resource loading. It advances through skipped stages in order.
 
-An `overall_progress` or `stage_progress` trigger maps the progress value from 0–1 between `from` and `to`, with easing. Unknown progress is `-1`. The engine holds the configured base value until progress is available, and holds its last driven value if progress later becomes unknown.
+An `overall_progress` or `stage_progress` trigger maps the progress value from 0–1 between `from` and `to`, with easing. Unknown progress is `-1`. The engine holds the configured base value until progress is available, and holds its last driven value if progress later becomes unknown. Stage progress becomes unknown when its meter disappears. Overall progress keeps the highest estimate seen so far.
 
 Progress is an estimate from available FML progress meters and the current startup stage. NeoForge does not expose one exact percentage for all startup work. Stages without a progress meter remain indeterminate.
 
-If the scene fails to load, the provider keeps the normal FML screen. If rendering fails, it shows a solid-color screen. Verified locally: the client selects the provider, loads the bundled scene, and completes startup.
+If the scene fails to load, the provider keeps the normal FML screen. If rendering fails, it shows a solid-color screen. Verified locally in the development environment with NeoForge 21.1.209 and with the packaged jar on NeoForge 21.1.229. The packaged check covered the default scene, fallback for a malformed scene, and selection of the standard provider.
 
 ## Example
 

@@ -57,13 +57,9 @@ public final class CustomLoadingScreen {
         providerField.setAccessible(true);
         Object earlyProvider = providerField.get(null);
         providerResolved = true;
-        if (earlyProvider == null) return;
-        if (earlyProvider.getClass().getName().endsWith("$DummyProvider")) return;
-        ClassLoader classLoader = earlyProvider.getClass().getClassLoader();
-        Class<?> providerClass = Class.forName("com.customloadingscreen.startup.StartupWindowProvider", false, classLoader);
-        Method activeProvider = providerClass.getMethod("getActiveProvider");
-        stageProvider = activeProvider.invoke(null);
-        if (stageProvider != null) stageMethod = providerClass.getMethod("lifecycleStage", String.class);
+        if (earlyProvider == null || !earlyProvider.getClass().getName().equals("com.customloadingscreen.startup.StartupWindowProvider")) return;
+        stageProvider = earlyProvider;
+        stageMethod = earlyProvider.getClass().getMethod("lifecycleStage", String.class);
     }
 
 }

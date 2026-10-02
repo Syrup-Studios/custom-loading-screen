@@ -15,13 +15,13 @@ displayTest="IGNORE_SERVER_VERSION"
 [[dependencies.customloadingscreen]]
 modId="neoforge"
 type="required"
-versionRange="[21.1.209,)"
+versionRange="[${neoforge},)"
 ordering="NONE"
 side="CLIENT"
 
 [[dependencies.customloadingscreen]]
 modId="minecraft"
 type="required"
-versionRange="[1.21.1]"
+versionRange="${minecraft}"
 ordering="NONE"
 side="CLIENT"
