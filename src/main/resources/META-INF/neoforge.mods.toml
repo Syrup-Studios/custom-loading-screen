@@ -1,6 +1,7 @@
 modLoader="javafml"
 loaderVersion="[4,)"
 license="${license}"
+issueTrackerURL="${issues}"
 
 [[mods]]
 modId="customloadingscreen"
@@ -8,6 +9,7 @@ version="${version}"
 displayName="${modName}"
 authors="${authors}"
 description='''${modDescription}'''
+displayURL="${homepage}"
 displayTest="IGNORE_SERVER_VERSION"
 
 [[dependencies.customloadingscreen]]

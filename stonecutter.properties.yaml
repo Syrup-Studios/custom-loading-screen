@@ -5,7 +5,14 @@ mod:
   version: 0.1.0
   description: 'A fully customizable, choreographed early loading screen for NeoForge.'
   authors: Syrup Studios
-  license: All Rights Reserved
+  license: Responsive Source License (RSL) v1.0
+  homepage: https://github.com/Syrup-Studios/custom-loading-screen
+  issues: https://github.com/Syrup-Studios/custom-loading-screen/issues
+
+publish:
+  curseforge: "1721903"
+  modrinth: "UG644KSt"
+publish.release_type: beta
 
 neoforge:deps:
   "1.21.1":

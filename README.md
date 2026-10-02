@@ -16,6 +16,18 @@ The client run uses the root `run` directory. `buildAndCollect` puts the install
 
 Install `customloadingscreen-0.1.0+1.21.1-neoforge.jar` in the instance's `mods` folder.
 
+## Publish
+
+Publishing uploads files to the selected platform. The project IDs are configured. Set the platform token as `MODRINTH_TOKEN` or `CURSEFORGE_TOKEN`, or use the Gradle properties `publish.modrinth_token` or `publish.curseforge_token`.
+
+```sh
+./gradlew :1.21.1-neoforge:publishModrinth
+./gradlew :1.21.1-neoforge:publishCurseforge
+./gradlew :1.21.1-neoforge:publishMods
+```
+
+The first two commands upload to one platform. `publishMods` uploads to both. Each task checks the project ID and token before upload.
+
 ## Enable the provider
 
 Set these values in `config/fml.toml` before starting Minecraft. For `runClient`, use `run/config/fml.toml`:

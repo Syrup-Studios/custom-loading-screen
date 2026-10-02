@@ -1,5 +1,6 @@
 plugins {
     id("net.neoforged.moddev")
+    id("me.modmuss50.mod-publish-plugin")
 }
 
 val minecraftVersion = "1.21.1"
@@ -65,6 +66,8 @@ tasks.processResources {
         "modDescription" to project.property("mod.description"),
         "authors" to project.property("mod.authors"),
         "license" to project.property("mod.license"),
+        "homepage" to project.property("mod.homepage"),
+        "issues" to project.property("mod.issues"),
         "minecraft" to "[$minecraftVersion]",
         "neoforge" to project.property("deps.neoforge_version")
     )
@@ -74,6 +77,10 @@ tasks.processResources {
 
 tasks.withType<AbstractArchiveTask>().configureEach {
     archiveVersion.set("${project.version}+$minecraftVersion-neoforge")
+}
+
+tasks.withType<Jar>().configureEach {
+    from(rootProject.file("LICENSE.md"))
 }
 
 val modJar = tasks.register<Jar>("modJar") {
@@ -101,4 +108,60 @@ tasks.register<Copy>("buildAndCollect") {
     from(tasks.named<Jar>("jar"), tasks.named<Jar>("sourcesJar"))
     into(rootProject.layout.buildDirectory.file("libs/${project.property("mod.version")}"))
     dependsOn("build")
+}
+
+val archiveVersion = "${project.version}+$minecraftVersion-neoforge"
+val curseForgeToken = providers.gradleProperty("publish.curseforge_token")
+    .orElse(providers.environmentVariable("CURSEFORGE_TOKEN"))
+val modrinthToken = providers.gradleProperty("publish.modrinth_token")
+    .orElse(providers.environmentVariable("MODRINTH_TOKEN"))
+val compatibleVersions = listOf(minecraftVersion)
+
+publishMods {
+    file = tasks.named<Jar>("jar").flatMap { it.archiveFile }
+    dryRun = false
+    version = archiveVersion
+    displayName = "${property("mod.name")} ${project.version} - NeoForge $minecraftVersion"
+    changelog = providers.fileContents(rootProject.layout.projectDirectory.file("CHANGELOG.md")).asText
+    type = when (property("publish.release_type").toString().lowercase()) {
+        "stable" -> STABLE
+        "beta" -> BETA
+        "alpha" -> ALPHA
+        else -> error("publish.release_type must be stable, beta, or alpha")
+    }
+    modLoaders.add("neoforge")
+
+    curseforge {
+        projectId = property("publish.curseforge").toString()
+        accessToken = curseForgeToken
+        compatibleVersions.forEach { minecraftVersions.add(it) }
+        client = true
+        server = false
+    }
+    modrinth {
+        projectId = property("publish.modrinth").toString()
+        accessToken = modrinthToken
+        compatibleVersions.forEach { minecraftVersions.add(it) }
+        environment = CLIENT_ONLY
+    }
+}
+
+tasks.matching { it.name == "publishCurseforge" || it.name == "publishModrinth" }.configureEach {
+    doFirst {
+        if (name == "publishCurseforge") {
+            check(project.property("publish.curseforge").toString().isNotBlank()) {
+                "Set publish.curseforge before uploading."
+            }
+            check(curseForgeToken.isPresent && !curseForgeToken.get().isBlank()) {
+                "Set publish.curseforge_token or CURSEFORGE_TOKEN before uploading."
+            }
+        } else {
+            check(project.property("publish.modrinth").toString().isNotBlank()) {
+                "Set publish.modrinth before uploading."
+            }
+            check(modrinthToken.isPresent && !modrinthToken.get().isBlank()) {
+                "Set publish.modrinth_token or MODRINTH_TOKEN before uploading."
+            }
+        }
+    }
 }
