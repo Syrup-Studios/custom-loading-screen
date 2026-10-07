@@ -2,7 +2,7 @@ mod:
   id: customloadingscreen
   name: Custom Loading Screen
   group: com.customloadingscreen
-  version: 0.1.0
+  version: 0.2.0
   description: 'A fully customizable, choreographed early loading screen for NeoForge.'
   authors: Syrup Studios
   license: Responsive Source License (RSL) v1.0

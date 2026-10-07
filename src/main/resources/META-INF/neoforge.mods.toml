@@ -12,6 +12,9 @@ description='''${modDescription}'''
 displayURL="${homepage}"
 displayTest="IGNORE_SERVER_VERSION"
 
+[[mixins]]
+config="customloadingscreen.mixins.json"
+
 [[dependencies.customloadingscreen]]
 modId="neoforge"
 type="required"

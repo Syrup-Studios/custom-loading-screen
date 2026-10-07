@@ -13,6 +13,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.ByteBuffer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -23,34 +24,51 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.Future;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
+import java.util.function.IntConsumer;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
-import static org.lwjgl.glfw.GLFW.glfwGetFramebufferSize;
+import org.lwjgl.system.MemoryUtil;
+
+import static org.lwjgl.glfw.GLFW.*;
+import static org.lwjgl.opengl.GL32C.*;
 
 public final class StartupWindowProvider extends DisplayWindow {
     public static final String PROVIDER_NAME = "customloadingscreen";
     private static final Logger LOGGER = LoggerFactory.getLogger(StartupWindowProvider.class);
     private static final long MAX_SCENE_BYTES = 1_048_576;
     private static final Field GLOBAL_ALPHA = findGlobalAlpha();
+    private static final Method RENDER_THREAD_FUNC = findRenderThreadFunc();
 
     private final StartupStageAdapter stages = new StartupStageAdapter();
     private final AtomicReference<RenderElement> customElement = new AtomicReference<>();
     private final AtomicBoolean renderFailed = new AtomicBoolean();
     private final AtomicBoolean elementBufferClosed = new AtomicBoolean();
+    private final AtomicBoolean closed = new AtomicBoolean();
+    private final AtomicBoolean closeRequested = new AtomicBoolean();
     private volatile StartupRenderer renderer;
     private volatile boolean installed;
     private long gameWindow;
-    private Field framebufferWidth;
-    private Field framebufferHeight;
     private final int[] framebufferWidthValue = new int[1];
     private final int[] framebufferHeightValue = new int[1];
+    private volatile boolean independentWindow;
+    private volatile boolean frozen;
+    private volatile boolean transitionReady;
+    private volatile boolean freezeFailed;
+    private volatile boolean gameWindowShown;
+    private volatile boolean transitionStarted;
+    private volatile boolean fullscreenAllowed;
+    private volatile boolean revealRequested;
+    private int placeholderTexture;
+    private Method clearTextureBinding;
 
     @Override
     public String name() {
@@ -78,6 +96,7 @@ public final class StartupWindowProvider extends DisplayWindow {
                 Runnable tick = super.start(minecraftVersion, neoForgeVersion);
                 ((Future<?>) field("initializationFuture").get(this)).get(30, TimeUnit.SECONDS);
                 if (!installed) installRenderer();
+                if (renderer != null && !renderFailed.get()) scheduleCustomRenderTick();
                 return tick;
             } finally {
                 renderLock.release();
@@ -90,6 +109,42 @@ public final class StartupWindowProvider extends DisplayWindow {
         }
     }
 
+    private void scheduleCustomRenderTick() {
+        if (RENDER_THREAD_FUNC == null) {
+            LOGGER.warn("Could not increase the custom loading screen render rate");
+            return;
+        }
+        ScheduledFuture<?> newTick = null;
+        try {
+            Field windowTickField = field("windowTick");
+            ScheduledFuture<?> oldTick = (ScheduledFuture<?>) windowTickField.get(this);
+            ScheduledExecutorService scheduler = (ScheduledExecutorService) field("renderScheduler").get(this);
+            Runnable renderTick = () -> {
+                try {
+                    RENDER_THREAD_FUNC.invoke(this);
+                } catch (ReflectiveOperationException error) {
+                    LOGGER.warn("Could not render the custom loading screen at 60 FPS", error);
+                }
+            };
+            newTick = scheduler.scheduleAtFixedRate(renderTick, 0, TimeUnit.SECONDS.toNanos(1) / 60, TimeUnit.NANOSECONDS);
+            windowTickField.set(this, newTick);
+            oldTick.cancel(false);
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            if (newTick != null) newTick.cancel(false);
+            LOGGER.warn("Could not increase the custom loading screen render rate", error);
+        }
+    }
+
+    private static Method findRenderThreadFunc() {
+        try {
+            Method method = DisplayWindow.class.getDeclaredMethod("renderThreadFunc");
+            method.setAccessible(true);
+            return method;
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            return null;
+        }
+    }
+
     @Override
     public Runnable initialize(String[] arguments) {
         LOGGER.info("Initializing custom early loading window");
@@ -98,47 +153,138 @@ public final class StartupWindowProvider extends DisplayWindow {
 
     @Override
     public long setupMinecraftWindow(IntSupplier width, IntSupplier height, Supplier<String> title, LongSupplier monitorSupplier) {
-        gameWindow = super.setupMinecraftWindow(width, height, title, monitorSupplier);
+        long earlyWindow;
         try {
-            framebufferWidth = field("fbWidth");
-            framebufferHeight = field("fbHeight");
-            refreshFramebufferSize();
-        } catch (ReflectiveOperationException error) {
-            framebufferWidth = null;
-            framebufferHeight = null;
-            LOGGER.warn("Could not refresh the early window framebuffer size after handoff", error);
+            earlyWindow = field("window").getLong(this);
+            if (RENDER_THREAD_FUNC == null) return super.setupMinecraftWindow(width, height, title, monitorSupplier);
+            String[] version = getGLVersion().split("\\.");
+            glfwDefaultWindowHints();
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+            glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_NATIVE_CONTEXT_API);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, Integer.parseInt(version[0]));
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, Integer.parseInt(version[1]));
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+            glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+            glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+            gameWindow = glfwCreateWindow(width.getAsInt(), height.getAsInt(), title.get(), 0L, earlyWindow);
+            if (gameWindow == 0L) return super.setupMinecraftWindow(width, height, title, monitorSupplier);
+            placeholderTexture = createPlaceholderTexture();
+            if (placeholderTexture == 0) {
+                glfwDestroyWindow(gameWindow);
+                gameWindow = 0L;
+                return super.setupMinecraftWindow(width, height, title, monitorSupplier);
+            }
+            independentWindow = true;
+            LOGGER.info("Created independent game window; the startup display will keep rendering during initialization");
+            return gameWindow;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            LOGGER.warn("Interrupted while creating the independent game window; using the normal handoff", error);
+            if (gameWindow != 0L) glfwDestroyWindow(gameWindow);
+            gameWindow = 0L;
+            return super.setupMinecraftWindow(width, height, title, monitorSupplier);
+        } catch (ReflectiveOperationException | ExecutionException | TimeoutException | RuntimeException error) {
+            LOGGER.warn("Could not create the independent game window; using the normal window handoff", error);
+            if (gameWindow != 0L) glfwDestroyWindow(gameWindow);
+            gameWindow = 0L;
+            return super.setupMinecraftWindow(width, height, title, monitorSupplier);
         }
-        return gameWindow;
     }
 
     @Override
     public void periodicTick() {
-        refreshFramebufferSize();
         super.periodicTick();
+        if (independentWindow && gameWindow != 0L && glfwWindowShouldClose(fieldWindow())) {
+            glfwSetWindowShouldClose(gameWindow, true);
+        }
     }
 
-    private void refreshFramebufferSize() {
-        if (gameWindow == 0 || framebufferWidth == null || framebufferHeight == null) return;
-        glfwGetFramebufferSize(gameWindow, framebufferWidthValue, framebufferHeightValue);
-        if (framebufferWidthValue[0] == 0 || framebufferHeightValue[0] == 0) return;
+    @Override
+    public boolean positionWindow(Optional<Object> monitor, IntConsumer width, IntConsumer height,
+                                  IntConsumer x, IntConsumer y) {
+        if (!independentWindow) return super.positionWindow(monitor, width, height, x, y);
         try {
-            framebufferWidth.setInt(this, framebufferWidthValue[0]);
-            framebufferHeight.setInt(this, framebufferHeightValue[0]);
-        } catch (IllegalAccessException error) {
-            framebufferWidth = null;
-            framebufferHeight = null;
-            LOGGER.warn("Could not refresh the early window framebuffer size after handoff", error);
+            int windowWidth = field("winWidth").getInt(this);
+            int windowHeight = field("winHeight").getInt(this);
+            int windowX = field("winX").getInt(this);
+            int windowY = field("winY").getInt(this);
+            width.accept(windowWidth);
+            height.accept(windowHeight);
+            x.accept(windowX);
+            y.accept(windowY);
+            glfwSetWindowSize(gameWindow, windowWidth, windowHeight);
+            glfwSetWindowPos(gameWindow, windowX, windowY);
+            return true;
+        } catch (ReflectiveOperationException error) {
+            LOGGER.warn("Could not align the game window with the startup window", error);
+            return false;
         }
+    }
+
+    @Override
+    public void updateFramebufferSize(IntConsumer width, IntConsumer height) {
+        if (!independentWindow) {
+            super.updateFramebufferSize(width, height);
+            return;
+        }
+        glfwGetFramebufferSize(gameWindow, framebufferWidthValue, framebufferHeightValue);
+        width.accept(Math.max(1, framebufferWidthValue[0]));
+        height.accept(Math.max(1, framebufferHeightValue[0]));
+    }
+
+    private long fieldWindow() {
+        try {
+            return field("window").getLong(this);
+        } catch (ReflectiveOperationException error) {
+            return 0L;
+        }
+    }
+
+    private int createPlaceholderTexture() throws ReflectiveOperationException, InterruptedException, ExecutionException, TimeoutException {
+        ScheduledExecutorService scheduler = (ScheduledExecutorService) field("renderScheduler").get(this);
+        Future<Integer> texture = scheduler.submit(() -> {
+            glfwMakeContextCurrent(fieldWindow());
+            try {
+                int id = glGenTextures();
+                glBindTexture(GL_TEXTURE_2D, id);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                ByteBuffer pixel = MemoryUtil.memAlloc(4);
+                try {
+                    pixel.put(0, (byte) 0);
+                    pixel.put(1, (byte) 0);
+                    pixel.put(2, (byte) 0);
+                    pixel.put(3, (byte) 0xFF);
+                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+                } finally {
+                    MemoryUtil.memFree(pixel);
+                }
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glFinish();
+                return id;
+            } finally {
+                glfwMakeContextCurrent(0L);
+            }
+        });
+        return texture.get(5, TimeUnit.SECONDS);
     }
 
     @Override
     public void updateModuleReads(ModuleLayer layer) {
         Module neoForge = layer.findModule("neoforge").orElseThrow();
         getClass().getModule().addReads(neoForge);
-        Class<?> overlay = Class.forName(neoForge, "net.neoforged.neoforge.client.loading.NeoForgeLoadingOverlay");
+        Module mod = layer.findModule("customloadingscreen").orElseThrow();
+        getClass().getModule().addReads(mod);
+        Class<?> overlay = Class.forName(mod, "com.customloadingscreen.overlay.SmoothLoadingOverlay");
+        Class<?> hooks = Class.forName(mod, "com.customloadingscreen.bridge.WindowHooks");
+        if (overlay == null) throw new IllegalStateException("Could not load the custom loading overlay");
+        if (hooks == null) throw new IllegalStateException("Could not load window hooks");
         try {
             Method method = overlay.getMethod("newInstance", Supplier.class, Supplier.class, Consumer.class, DisplayWindow.class);
             field("loadingOverlay").set(this, method);
+            clearTextureBinding = overlay.getMethod("clearFramebufferTextureBinding");
+            hooks.getMethod("registerProvider", Object.class).invoke(null, this);
         } catch (ReflectiveOperationException error) {
             throw new IllegalStateException("Could not initialize the NeoForge loading overlay", error);
         }
@@ -148,15 +294,91 @@ public final class StartupWindowProvider extends DisplayWindow {
     public void addMojangTexture(int textureId) {
     }
 
+    public void loadingFinished() {
+        transitionStarted = true;
+        stages.complete();
+        freezeStartupRenderer();
+        LOGGER.info("Startup loading completed");
+    }
+
+    public void loadingFailed() {
+        transitionStarted = true;
+        freezeStartupRenderer();
+    }
+
+    private void freezeStartupRenderer() {
+        if (!independentWindow || transitionReady) return;
+        try {
+            ScheduledExecutorService scheduler = (ScheduledExecutorService) field("renderScheduler").get(this);
+            ScheduledFuture<?> tick = (ScheduledFuture<?>) field("windowTick").get(this);
+            if (tick != null) tick.cancel(false);
+            Future<?> finalFrame = scheduler.schedule(() -> {
+                try {
+                    RENDER_THREAD_FUNC.invoke(this);
+                    glfwMakeContextCurrent(fieldWindow());
+                    glFinish();
+                } catch (ReflectiveOperationException error) {
+                    throw new IllegalStateException("Could not capture the final startup frame", error);
+                } finally {
+                    glfwMakeContextCurrent(0L);
+                }
+            }, 20, TimeUnit.MILLISECONDS);
+            finalFrame.get(5, TimeUnit.SECONDS);
+            frozen = true;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            freezeFailed = true;
+            LOGGER.warn("Interrupted while freezing the startup display", error);
+        } catch (ReflectiveOperationException | ExecutionException | TimeoutException error) {
+            freezeFailed = true;
+            LOGGER.warn("Could not freeze the startup display; the game will use a blank loading image", error);
+        } finally {
+            transitionReady = true;
+        }
+    }
+
+    public boolean deferGameWindowFullscreen(long window) {
+        return independentWindow && !fullscreenAllowed && window == gameWindow;
+    }
+
+    public boolean usesIndependentWindow() { return independentWindow; }
+    public boolean isTransitionReady() { return !independentWindow || transitionReady; }
+
+    public void requestGameWindowReveal() {
+        if (independentWindow && transitionStarted) revealRequested = true;
+    }
+
+    public void revealGameWindowAfterFrame(long window) {
+        if (window != gameWindow) return;
+        if (!closed.get() && independentWindow && revealRequested && !gameWindowShown) {
+            revealRequested = false;
+            glfwShowWindow(gameWindow);
+            glfwHideWindow(fieldWindow());
+            gameWindowShown = true;
+            LOGGER.info("Showing the game window after its first loading frame");
+        }
+        if (closeRequested.get()) closeIndependentWindow();
+    }
+
+    public void closeGameWindow(long window) {
+        if (window != gameWindow) return;
+        if (independentWindow) {
+            closeRequested.set(true);
+            closeIndependentWindow();
+        } else close();
+    }
+
     @Override
-    public <T> Supplier<T> loadingOverlay(Supplier<?> minecraft, Supplier<?> reload, Consumer<Optional<Throwable>> onFinish, boolean fade) {
-        return super.loadingOverlay(minecraft, reload, result -> {
-            if (result.isEmpty()) {
-                stages.complete();
-                LOGGER.info("Startup loading completed");
-            }
-            onFinish.accept(result);
-        }, fade);
+    public void render(int alpha) {
+        if (closed.get()) return;
+        if (!independentWindow) super.render(alpha);
+    }
+
+    @Override
+    public int getFramebufferTextureId() {
+        if (closed.get()) return placeholderTexture;
+        if (independentWindow && (!frozen || freezeFailed)) return placeholderTexture;
+        return super.getFramebufferTextureId();
     }
 
     public void lifecycleStage(String stageName) {
@@ -252,9 +474,74 @@ public final class StartupWindowProvider extends DisplayWindow {
 
     @Override
     public void close() {
+        if (independentWindow) {
+            if (closed.get() || !closeRequested.compareAndSet(false, true)) return;
+            fullscreenAllowed = true;
+            cancelWindowTicks();
+            return;
+        }
+        if (!closed.compareAndSet(false, true)) return;
         if (customElement.get() != null) closeElementBuffer(customElement.get());
         if (renderer != null && !renderFailed.get()) renderer.close();
         super.close();
+    }
+
+    private synchronized void closeIndependentWindow() {
+        if (!independentWindow || !closed.compareAndSet(false, true)) return;
+        fullscreenAllowed = true;
+        try {
+            if (clearTextureBinding != null) clearTextureBinding.invoke(null);
+        } catch (ReflectiveOperationException error) {
+            LOGGER.warn("Could not clear the captured loading texture binding", error);
+        }
+        cancelWindowTicks();
+        long earlyWindow = fieldWindow();
+        try {
+            ScheduledExecutorService scheduler = (ScheduledExecutorService) field("renderScheduler").get(this);
+            Future<?> cleanup = scheduler.submit(() -> {
+                glfwMakeContextCurrent(earlyWindow);
+                try {
+                    if (customElement.get() != null) closeElementBuffer(customElement.get());
+                    if (renderer != null && !renderFailed.get()) renderer.close();
+                    if (placeholderTexture != 0) glDeleteTextures(placeholderTexture);
+                    super.close();
+                } finally {
+                    glfwMakeContextCurrent(0L);
+                }
+            });
+            cleanup.get(10, TimeUnit.SECONDS);
+            closeCallback(glfwSetFramebufferSizeCallback(earlyWindow, null));
+            closeCallback(glfwSetWindowPosCallback(earlyWindow, null));
+            closeCallback(glfwSetWindowSizeCallback(earlyWindow, null));
+            glfwDestroyWindow(earlyWindow);
+            field("window").setLong(this, 0L);
+            independentWindow = false;
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while closing the startup display", error);
+        } catch (ReflectiveOperationException | ExecutionException | TimeoutException error) {
+            throw new IllegalStateException("Could not close the startup display before GLFW shutdown", error);
+        }
+    }
+
+    private void cancelWindowTicks() {
+        try {
+            ScheduledFuture<?> tick = (ScheduledFuture<?>) field("windowTick").get(this);
+            ScheduledFuture<?> performance = (ScheduledFuture<?>) field("performanceTick").get(this);
+            if (tick != null) tick.cancel(false);
+            if (performance != null) performance.cancel(false);
+        } catch (ReflectiveOperationException error) {
+            throw new IllegalStateException("Could not stop the startup display scheduler", error);
+        }
+    }
+
+    private static void closeCallback(AutoCloseable callback) {
+        if (callback == null) return;
+        try {
+            callback.close();
+        } catch (Exception error) {
+            LOGGER.debug("Could not release an early-window callback", error);
+        }
     }
 
     private void closeElementBuffer(RenderElement element) {

@@ -20,7 +20,6 @@ public final class StartupRenderer implements AutoCloseable {
     private final SimpleFont font;
     private final TextBuffer textBuffer = new TextBuffer();
     private final TextureLoader textures = new TextureLoader();
-    private int lastFrame = -1;
     private Scene.Stage lastStage;
     private long lastFrameNanos = System.nanoTime();
     private long completeStartedNanos = -1;
@@ -32,17 +31,20 @@ public final class StartupRenderer implements AutoCloseable {
     public StartupRenderer(Scene scene, SimpleFont font) {
         this.scene = scene;
         this.font = font;
+        if (scene != null) for (Scene.Element element : scene.elements()) {
+            if (switch (element.type.toLowerCase(java.util.Locale.ROOT)) {
+                case "texture", "image", "logo", "sprite" -> !element.texture.isBlank();
+                default -> false;
+            }) textures.request(element.texture);
+        }
     }
 
     public void render(SimpleBufferBuilder bb, RenderElement.DisplayContext ctx, int frame, int globalAlpha, StartupStageAdapter adapter) {
         if (scene == null) return;
-        if (frame != lastFrame) {
-            long now = System.nanoTime();
-            double delta = (now - lastFrameNanos) / 1_000_000_000.0;
-            if (delta > 0) fps = fps == 0 ? 1 / delta : fps * .9 + .1 / delta;
-            lastFrameNanos = now;
-            lastFrame = frame;
-        }
+        long now = System.nanoTime();
+        double delta = (now - lastFrameNanos) / 1_000_000_000.0;
+        if (delta > 0) fps = fps == 0 ? 1 / delta : fps * .9 + .1 / delta;
+        lastFrameNanos = now;
         if (adapter != null) {
             adapter.poll();
             if (lastStage == null) {
@@ -96,8 +98,11 @@ public final class StartupRenderer implements AutoCloseable {
                 case "text" -> drawText(ctx, fit, offsetX, offsetY, x, y, w, h, e, color);
                 case "texture", "image", "logo", "sprite" -> {
                     if (e.texture.isBlank() && !e.text.isEmpty()) drawText(ctx, fit, offsetX, offsetY, x, y, w, h, e, color);
-                    else if (textures.load(e.texture) == 0 && !e.text.isEmpty()) drawText(ctx, fit, offsetX, offsetY, x, y, w, h, e, color);
-                    else drawTexture(bb, shader, fit, offsetX, offsetY, x, y, w, h, e, color);
+                    else {
+                        int texture = textures.load(e.texture);
+                        if (texture == 0 && !e.text.isEmpty()) drawText(ctx, fit, offsetX, offsetY, x, y, w, h, e, color);
+                        else drawTexture(bb, shader, fit, offsetX, offsetY, x, y, w, h, e, color, texture);
+                    }
                 }
                 default -> {
                     shader.updateTextureUniform(0);
@@ -112,8 +117,7 @@ public final class StartupRenderer implements AutoCloseable {
     }
 
     private void drawTexture(SimpleBufferBuilder bb, ElementShader shader, double fit, double ox, double oy,
-                             double x, double y, double w, double h, Scene.Element e, int color) {
-        int texture = textures.load(e.texture);
+                             double x, double y, double w, double h, Scene.Element e, int color, int texture) {
         if (texture == 0) {
             shader.updateTextureUniform(0);
             shader.updateRenderTypeUniform(ElementShader.RenderType.BAR);

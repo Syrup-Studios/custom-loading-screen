@@ -12,9 +12,9 @@ Use Java 21.
 ./gradlew :1.21.1-neoforge:buildAndCollect
 ```
 
-The client run uses the root `run` directory. `buildAndCollect` puts the installable and sources jars in `build/libs/0.1.0/`.
+The client run uses the root `run` directory. `buildAndCollect` puts the installable and sources jars in `build/libs/0.2.0/`.
 
-Install `customloadingscreen-0.1.0+1.21.1-neoforge.jar` in the instance's `mods` folder.
+Install `customloadingscreen-0.2.0+1.21.1-neoforge.jar` in the instance's `mods` folder.
 
 ## Publish
 
@@ -45,7 +45,9 @@ Put custom images in `config/customloadingscreen/assets/`. A texture value such 
 
 The scene file can be up to 1 MiB. Each image can be up to 16 MiB and 4096 by 4096 pixels. Texture paths are relative and cannot contain `..`, start with `/`, or contain a backslash or colon.
 
-The early display uses a 854 by 480 render target at 20 FPS. It scales the virtual canvas to fit. Empty space uses a black letterbox. Text uses FML's built-in font. Use basic ASCII text. The renderer does not support mouse input, mouse parallax, or animated tint.
+The early display uses a 854 by 480 render target at up to 60 FPS. It scales the virtual canvas to fit. Empty space uses a black letterbox. Text uses FML's built-in font. Use basic ASCII text. The renderer does not support mouse input, mouse parallax, or animated tint.
+
+The game uses a second, hidden window while Minecraft initializes. The early display keeps rendering in its own OpenGL context during this time. After initialization, the game window shows the captured loading screen and fades to the menu. In fullscreen mode, Minecraft applies fullscreen after this fade.
 
 ## Scene JSON
 
@@ -56,8 +58,10 @@ Root keys:
 | `canvasWidth` | integer | `1920` | Width of the virtual canvas. Range: 1–16384. |
 | `canvasHeight` | integer | `1080` | Height of the virtual canvas. Range: 1–16384. |
 | `debug` | boolean | `false` | Show stage, progress, FPS, elapsed time, and active animations. |
-| `exitDuration` | number | `1` | Seconds for the custom scene fade after `COMPLETE`. Range: 0–3600. NeoForge also applies a separate, fixed 2-second overlay fade. A longer custom fade can be cut short when that overlay closes. |
+| `exitDuration` | number | `1` | Seconds for the custom scene fade after `COMPLETE`. Range: 0–3600. The renderer evaluates this fade when it captures the final frame. NeoForge then fades that still frame to the menu over about 0.25 seconds. |
 | `elements` | array | `[]` | Ordered render elements. The engine sorts them by `layer`. Limit: 128. |
+
+When Fadeless is installed, the loading overlay is restored during NeoForge's crossfade so the custom screen can finish its transition.
 
 Element keys. Unknown types or invalid values stop scene loading.
 
@@ -93,6 +97,8 @@ Integer fields reject fractional values and values outside their documented rang
 
 The loader caches successful decoded textures up to a total of 128 MiB of RGBA pixels. It rejects an image that exceeds this budget, and uses the scene fallback when an image is missing, rejected, or fails to upload.
 
+The renderer requests scene images before its first frame. A background worker reads and decodes them; OpenGL uploads them on the render thread. The scene fallback appears while an image loads.
+
 When overall progress is available, a `progress_bar` uses its current animated width multiplied by overall progress. If progress is unknown, it uses its current width unchanged.
 
 ## Animations
@@ -121,7 +127,7 @@ An `overall_progress` or `stage_progress` trigger maps the progress value from 0
 
 Progress is an estimate from available FML progress meters and the current startup stage. NeoForge does not expose one exact percentage for all startup work. Stages without a progress meter remain indeterminate.
 
-If the scene fails to load, the provider keeps the normal FML screen. If rendering fails, it shows a solid-color screen. Verified locally in the development environment with NeoForge 21.1.209 and with the packaged jar on NeoForge 21.1.229. The packaged check covered the default scene, fallback for a malformed scene, and selection of the standard provider.
+If the scene fails to load, the provider keeps the normal FML screen. If rendering fails, it shows a solid-color screen. Development checks with NeoForge 21.1.209 completed in windowed and fullscreen modes. During a 5-second game-thread pause, the startup renderer produced 300 frames. The packaged renderer also completed startup in a modpack with Connector and Fadeless. The 0.25-second menu fade has built successfully; its visual duration has not been checked in-game.
 
 ## Example
 

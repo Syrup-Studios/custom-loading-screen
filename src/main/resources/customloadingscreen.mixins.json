@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.customloadingscreen.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "WindowMixin",
+    "WindowAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

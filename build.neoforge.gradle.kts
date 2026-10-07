@@ -8,8 +8,13 @@ val targetJavaVersion = 21
 val sourceSets = extensions.getByType<SourceSetContainer>()
 
 sourceSets.named("main") {
-    java.include("com/customloadingscreen/CustomLoadingScreen.java")
-    resources.include("META-INF/neoforge.mods.toml")
+    java.include(
+        "com/customloadingscreen/CustomLoadingScreen.java",
+        "com/customloadingscreen/overlay/SmoothLoadingOverlay.java",
+        "com/customloadingscreen/bridge/**",
+        "com/customloadingscreen/mixin/**"
+    )
+    resources.include("META-INF/neoforge.mods.toml", "customloadingscreen.mixins.json")
 }
 
 val earlyProvider = sourceSets.create("earlyProvider") {
@@ -90,7 +95,14 @@ val modJar = tasks.register<Jar>("modJar") {
 
 tasks.named<Jar>("jar") {
     // FML loads this provider jar in the service layer and discovers the mod from the nested jar.
-    exclude("com/customloadingscreen/CustomLoadingScreen.class", "META-INF/neoforge.mods.toml")
+    exclude(
+        "com/customloadingscreen/CustomLoadingScreen.class",
+        "com/customloadingscreen/overlay/**",
+        "com/customloadingscreen/bridge/**",
+        "com/customloadingscreen/mixin/**",
+        "customloadingscreen.mixins.json",
+        "META-INF/neoforge.mods.toml"
+    )
     from(earlyProvider.output)
     from(modJar.flatMap { it.archiveFile }) {
         into("META-INF/jarjar")

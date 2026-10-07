@@ -10,7 +10,6 @@ import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
 import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Map;
 
 public final class EmbeddedModLocator implements IModFileCandidateLocator {
@@ -28,7 +27,7 @@ public final class EmbeddedModLocator implements IModFileCandidateLocator {
         }
 
         try {
-            Path embeddedMod = Paths.get(resource.toURI());
+            Path embeddedMod = Path.of(resource.toURI());
             URI uri = new URI("jij:" + embeddedMod.toAbsolutePath().toUri().getRawSchemeSpecificPart()).normalize();
             var fileSystem = FileSystems.newFileSystem(uri, Map.of("packagePath", embeddedMod));
             pipeline.addJarContent(
